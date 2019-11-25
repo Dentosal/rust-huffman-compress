@@ -57,7 +57,6 @@
 //! ```
 
 #![doc(html_root_url = "https://docs.rs/huffman-compress/0.5.0")]
-
 #![deny(missing_docs)]
 #![deny(missing_debug_implementations)]
 
@@ -98,7 +97,6 @@ enum NodeData<K> {
     Leaf { symbol: K },
     Branch { left: usize, right: usize },
 }
-
 
 impl<K: Clone> Tree<K> {
     /// An iterator decoding symbols from a source of bits.
@@ -146,9 +144,7 @@ impl<K: Clone> Tree<K> {
     /// Recursive helper of to_bits
     fn to_bits_subtree(&self, index: usize) -> (BitVec, Vec<K>) {
         match self.arena[index].data.clone() {
-            NodeData::Leaf { symbol } => {
-                (BitVec::from_elem(1, true), vec![symbol])
-            },
+            NodeData::Leaf { symbol } => (BitVec::from_elem(1, true), vec![symbol]),
             NodeData::Branch { left, right } => {
                 let mut bits = BitVec::from_elem(1, false);
                 let mut frqs = Vec::new();
@@ -174,49 +170,70 @@ impl<K: Clone> Tree<K> {
     /// * already contains a value
     /// * tries to insert in left side of reserved value
     fn insert_path_subtree(&mut self, index: usize, mut path: BitVec, value: K) {
-        assert!(path.len() >= 1);
+        assert!(!path.is_empty());
 
         match self.arena[index].data.clone() {
-            NodeData::Leaf { symbol: _ } => {
+            NodeData::Leaf { .. } => {
                 panic!("Path blocked by leaf");
-            },
+            }
             NodeData::Branch { left, right } if path.len() == 1 => {
                 let leaf_index = self.arena.len();
                 self.arena.push(Node {
                     parent: Some(index),
-                    data: NodeData::Leaf { symbol: value.clone() },
+                    data: NodeData::Leaf { symbol: value },
                 });
 
                 if left == self.root {
                     // left node is free
-                    assert!(right == self.root, "Insertions must be done in left-to-right order");
+                    assert!(
+                        right == self.root,
+                        "Insertions must be done in left-to-right order"
+                    );
                     self.arena[index] = Node {
                         parent: self.arena[index].parent,
-                        data: NodeData::Branch { left: leaf_index, right }
+                        data: NodeData::Branch {
+                            left: leaf_index,
+                            right,
+                        },
                     };
                 } else {
                     self.arena[index] = Node {
                         parent: self.arena[index].parent,
-                        data: NodeData::Branch { left, right: leaf_index }
+                        data: NodeData::Branch {
+                            left,
+                            right: leaf_index,
+                        },
                     };
                 }
-            },
-            NodeData::Branch { mut left, mut right } => {
+            }
+            NodeData::Branch {
+                mut left,
+                mut right,
+            } => {
                 let direction = path.pop().unwrap();
 
                 // Create new branch if needed
                 let branch_index = self.arena.len();
                 if (!direction) && left == self.root {
-                    assert!(right == self.root, "Insertions must be done in left-to-right order");
+                    assert!(
+                        right == self.root,
+                        "Insertions must be done in left-to-right order"
+                    );
                     self.arena.push(Node {
                         parent: Some(index),
-                        data: NodeData::Branch { left: self.root, right: self.root },
+                        data: NodeData::Branch {
+                            left: self.root,
+                            right: self.root,
+                        },
                     });
                     left = branch_index;
                 } else if direction && right == self.root {
                     self.arena.push(Node {
                         parent: Some(index),
-                        data: NodeData::Branch { left: self.root, right: self.root },
+                        data: NodeData::Branch {
+                            left: self.root,
+                            right: self.root,
+                        },
                     });
                     right = branch_index;
                 }
@@ -228,19 +245,18 @@ impl<K: Clone> Tree<K> {
                 } else {
                     self.insert_path_subtree(left, path, value);
                 }
-            },
+            }
         };
     }
 
     /// Builds tree from bits and frequencies
     /// Returns None if tree is invalid
-    pub fn from_bits(bits: BitVec, frqs: Vec<K>) -> Option<Tree<K>> {
+    pub fn from_bits(bits: BitVec, frqs: &[K]) -> Option<Tree<K>> {
         if bits.len() % 2 != 1 {
             return None;
         }
 
         let leaf_count = bits.len() / 2 + 1;
-
 
         let mut bitstream = bits.iter();
         let mut value = BitVec::new();
@@ -253,12 +269,12 @@ impl<K: Clone> Tree<K> {
                     // loop to root (this node) for placeholder
                     left: 0,
                     right: 0,
-                }
-            }]
+                },
+            }],
         };
 
         // Read first symbol
-        for i in 0..leaf_count {
+        for frq in frqs.iter().take(leaf_count) {
             // Read until next set bit
             loop {
                 let nb = bitstream.next()?;
@@ -269,12 +285,12 @@ impl<K: Clone> Tree<K> {
             }
 
             // Write symbol
-            tree.insert_path_subtree(0, value.clone().iter().rev().skip(1).collect(), frqs[i].clone());
+            tree.insert_path_subtree(0, value.clone().iter().rev().skip(1).collect(), frq.clone());
 
             // Remove trailing ones
             while value.get(value.len() - 1)? {
                 let _ = value.pop().unwrap();
-                if value.len() == 0 {
+                if value.is_empty() {
                     return Some(tree);
                 }
             }
@@ -287,29 +303,6 @@ impl<K: Clone> Tree<K> {
         // Read the whole value, but tree was not over
         None
     }
-
-    // TODO: CHECK? NEEDED?
-    // /// Builds tree from a list of (paths. symbol) pairs
-    // /// Panics if tree is invalid
-    // pub fn from_paths(paths: <BitVec, K>) -> Tree<K> {
-    //     let mut tree = Tree {
-    //         root: 0,
-    //         arena: vec![Node {
-    //             parent: None,
-    //             data: NodeData::Branch {
-    //                 // loop to root (this node) for placeholder
-    //                 left: 0,
-    //                 right: 0,
-    //             }
-    //         }]
-    //     };
-
-    //     for (p, v) in paths {
-    //         tree.insert_path_subtree(0, p, v.clone());
-    //     }
-
-    //     tree
-    // }
 }
 
 /// A bounded [decoder](struct.UnboundedDecoder.html), decoding symbols from
@@ -336,7 +329,7 @@ impl<'a, K: Clone, I: IntoIterator<Item = bool>> Iterator for UnboundedDecoder<'
             match node.data {
                 NodeData::Leaf { ref symbol } => {
                     return Some(symbol.clone());
-                },
+                }
                 NodeData::Branch { left, right } => {
                     node = match self.iter.next() {
                         Some(true) => &self.tree.arena[left],
@@ -517,7 +510,15 @@ impl<K: Ord + Clone, W: Saturating + Ord> CodeBuilder<K, W> {
         let root = loop {
             let left = match self.heap.pop() {
                 Some(left) => left,
-                None => return (book, Tree { root: 0, arena: self.arena }),
+                None => {
+                    return (
+                        book,
+                        Tree {
+                            root: 0,
+                            arena: self.arena,
+                        },
+                    )
+                }
             };
 
             let right = match self.heap.pop() {
@@ -546,7 +547,13 @@ impl<K: Ord + Clone, W: Saturating + Ord> CodeBuilder<K, W> {
         };
 
         book.build(&self.arena, &self.arena[root.id], BitVec::new());
-        (book, Tree { root: root.id, arena: self.arena })
+        (
+            book,
+            Tree {
+                root: root.id,
+                arena: self.arena,
+            },
+        )
     }
 }
 
@@ -580,7 +587,9 @@ impl<K: Ord + Clone, W: Saturating + Ord> Extend<(K, W)> for CodeBuilder<K, W> {
     }
 }
 
-impl<'a, K: Ord + Clone, W: Saturating + Ord + Clone> FromIterator<(&'a K, &'a W)> for CodeBuilder<K, W> {
+impl<'a, K: Ord + Clone, W: Saturating + Ord + Clone> FromIterator<(&'a K, &'a W)>
+    for CodeBuilder<K, W>
+{
     fn from_iter<T>(weights: T) -> CodeBuilder<K, W>
     where
         T: IntoIterator<Item = (&'a K, &'a W)>,
@@ -659,12 +668,7 @@ mod tests {
 
     #[test]
     fn test_uniform_from_static() {
-        const WEIGHTS: &[(&char, &usize)] = &[
-            (&'a', &1),
-            (&'b', &1),
-            (&'c', &1),
-            (&'d', &1),
-        ];
+        const WEIGHTS: &[(&char, &usize)] = &[(&'a', &1), (&'b', &1), (&'c', &1), (&'d', &1)];
         let (book, tree) = codebook(WEIGHTS.iter().cloned());
 
         let mut buffer = BitVec::new();
